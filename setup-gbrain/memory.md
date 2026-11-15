@@ -343,11 +343,14 @@ What `/setup-gbrain` does:
    **NETWORK** ("check Tailscale/DNS"), **AUTH** ("rotate token"),
    **MALFORMED** ("Accept-header gotcha — pass both `application/json`
    AND `text/event-stream`").
-2. Registers the MCP at user scope:
+2. Registers the MCP for supported local hosts:
    ```
    claude mcp add --scope user --transport http gbrain "$URL" \
      --header "Authorization: Bearer $TOKEN"
+   codex mcp add gbrain --url "$URL" --bearer-token-env-var GBRAIN_MCP_TOKEN
    ```
+   Codex stores the MCP URL and env-var name, not an OAuth login; the
+   bearer token is kept in `~/.codex/gstack/gbrain-mcp.env` at mode 0600.
 3. Skips local install, local doctor, transcript ingest, and federated
    source registration. All four require a local `gbrain` CLI that Path 4
    doesn't install.
@@ -357,20 +360,28 @@ What `/setup-gbrain` does:
 
 ### Token storage trade-off
 
-The bearer token lives in `~/.claude.json` (mode 0600), where Claude Code
-stores every MCP server's credentials. During `claude mcp add --header
-"Authorization: Bearer $TOKEN"`, the token is briefly visible in
-process argv (~10ms) — visible to `ps` running concurrently. The window
-is small but it's not zero.
+The bearer token lives in host-specific private credential surfaces:
+
+- Claude Code: `~/.claude.json` (mode 0600), where Claude Code stores every
+  MCP server's credentials. During `claude mcp add --header "Authorization:
+  Bearer $TOKEN"`, the token is briefly visible in process argv (~10ms) —
+  visible to `ps` running concurrently. The window is small but it's not zero.
+- Codex CLI: `~/.codex/config.toml` stores only the MCP URL and the
+  `GBRAIN_MCP_TOKEN` env-var name. The token itself rests in
+  `~/.codex/gstack/gbrain-mcp.env` (mode 0600) and must be sourced before
+  Codex starts. This avoids repeated `codex mcp login` prompts for gbrain
+  because gbrain uses bearer auth, not OAuth.
 
 Mitigations we've considered:
 - **Stdin or env-var input form for headers** — would close the argv
   window. As of Claude Code v1.0.x, the CLI doesn't expose either.
-  When it does, `/setup-gbrain` Path 4 will switch automatically.
+  Codex already exposes `--bearer-token-env-var`, so Path 4 uses it.
+  When Claude exposes an equivalent, `/setup-gbrain` Path 4 will switch
+  automatically.
 - **Keychain storage** — explicitly out of scope (the token's resting
-  state in `~/.claude.json` is the existing trust surface for every MCP
-  credential; expanding to Keychain would touch every MCP server, not
-  just gbrain).
+  state in host-owned private config files is the existing trust surface
+  for MCP credentials; expanding to Keychain would touch every MCP server,
+  not just gbrain).
 
 ### Why Path 4 is "always print" for the brain-admin hookup
 

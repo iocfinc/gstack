@@ -105,10 +105,10 @@ You are setting up gbrain (https://github.com/garrytan/gbrain), a persistent
 knowledge base, on the user's machine so that this coding agent (typically
 Claude Code) can call it as both a CLI and an MCP tool.
 
-**Scope honesty:** This skill's MCP registration step (5a) uses
-`claude mcp add` and targets Claude Code specifically. Other local hosts
-(Cursor, Codex CLI, etc.) will still get the gbrain CLI on PATH — they can
-register `gbrain serve` in their own MCP config manually after setup.
+**Scope honesty:** This skill's MCP registration step (5a) wires Claude Code
+and Codex CLI when their binaries are available. Other local hosts (Cursor,
+OpenCode, etc.) will still get the gbrain CLI on PATH — they can register
+`gbrain serve` in their own MCP config manually after setup.
 
 **Audience:** local machines (macOS, Linux, Windows). openclaw/hermes agents typically run in cloud
 docker containers with their own gbrain; "sharing" a brain between them and
@@ -326,34 +326,69 @@ If `BRAIN_OK` is `true`, proceed; skill checks never count. Note any
 
 ---
 
-## Step 5a: Register gbrain as Claude Code MCP
+## Step 5a: Register gbrain as MCP (D18)
 
-Only if `which claude` resolves. Ask: "Give Claude Code a typed tool surface
-for gbrain? (recommended yes)"
+Ask once: "Give local coding agents a typed tool surface for gbrain?
+(recommended yes)" If the user says no, skip all host MCP registration and
+continue to Step 6.
 
-The registration form depends on the path picked in Step 2:
+The registration form depends on the path picked in Step 2 and the host binary
+being present.
 
 ### Path 4 (Remote MCP — HTTP transport with bearer)
 
-Tear down any prior registration (could be local-stdio from an old setup,
-or stale remote-http with a rotated token), then register with HTTP +
-bearer at user scope:
+#### Claude Code
 
 ```bash
-claude mcp remove gbrain -s user 2>/dev/null || true
-claude mcp remove gbrain 2>/dev/null || true
-claude mcp add --scope user --transport http gbrain "$MCP_URL" \
-  --header "Authorization: Bearer $GBRAIN_MCP_TOKEN"
-unset GBRAIN_MCP_TOKEN  # zero from process env after registration
-claude mcp list | grep gbrain  # verify: should show "✓ Connected"
+if command -v claude >/dev/null 2>&1; then
+  # Tear down any prior registration (could be local-stdio from an old setup,
+  # or stale remote-http with a rotated token), then register with HTTP +
+  # bearer at user scope.
+  claude mcp remove gbrain -s user 2>/dev/null || true
+  claude mcp remove gbrain 2>/dev/null || true
+  claude mcp add --scope user --transport http gbrain "$MCP_URL" \
+    --header "Authorization: Bearer $GBRAIN_MCP_TOKEN"
+  claude mcp list | grep gbrain  # verify: should show "✓ Connected"
+fi
+```
+
+#### Codex CLI
+
+Codex supports bearer-token HTTP MCP without OAuth login by storing the MCP URL
+in `~/.codex/config.toml` and reading the bearer from an env var. Persist the
+env var in a gstack-owned private env file, then register the MCP against the
+env var name. This avoids `codex mcp login` for gbrain.
+
+```bash
+if command -v codex >/dev/null 2>&1; then
+  mkdir -p "$HOME/.codex/gstack"
+  old_umask=$(umask)
+  umask 077
+  printf 'export GBRAIN_MCP_TOKEN=%q\n' "$GBRAIN_MCP_TOKEN" > "$HOME/.codex/gstack/gbrain-mcp.env"
+  umask "$old_umask"
+  chmod 600 "$HOME/.codex/gstack/gbrain-mcp.env"
+
+  # Make the token available for this shell's verification call. Future Codex
+  # CLI sessions should source ~/.codex/gstack/gbrain-mcp.env before startup.
+  # GUI Codex apps may need a restart from an environment that includes it.
+  . "$HOME/.codex/gstack/gbrain-mcp.env"
+
+  codex mcp remove gbrain 2>/dev/null || true
+  codex mcp add gbrain --url "$MCP_URL" --bearer-token-env-var GBRAIN_MCP_TOKEN
+  codex mcp list | grep gbrain  # verify: should show gbrain enabled
+fi
+
+unset GBRAIN_MCP_TOKEN  # zero from process env after host registrations
 ```
 
 **Token-storage note:** `claude mcp add --header "Authorization: Bearer ..."`
 puts the bearer on argv during process startup, briefly visible to `ps` for
 ~10ms. The token's resting state is `~/.claude.json` (mode 0600 — Claude
-Code's own credential surface for every MCP server). This trade-off is
-documented in `setup-gbrain/memory.md`. If a future Claude Code release adds
-a stdin or env-var input form for headers, switch to that.
+Code's own credential surface for every MCP server). Codex stores only the
+env-var name in `~/.codex/config.toml`; the bearer rests in
+`~/.codex/gstack/gbrain-mcp.env` at mode 0600. These trade-offs are documented
+in `setup-gbrain/memory.md`. If a future Claude Code release adds a stdin or
+env-var input form for headers, switch to that.
 
 ### Paths 1, 2a, 2b, 3 (Local stdio)
 
@@ -397,14 +432,16 @@ fine.
 
 ### Both paths
 
-If `claude` is not on PATH: emit "MCP registration skipped — this skill is
-Claude-Code-targeted; register `gbrain serve` (or your remote MCP URL) in
-your agent's MCP config manually." Continue to step 6.
+If neither `claude` nor `codex` is on PATH: emit "MCP registration skipped —
+register `gbrain serve` (or your remote MCP URL) in your agent's MCP config
+manually." Continue to step 6.
 
-**Heads-up for the user:** an already-open Claude Code session will not
-pick up the new MCP tools until restart. Tell them: "Restart any open
-Claude Code sessions to see `mcp__gbrain__*` tools — they're loaded at
-session start, not mid-session."
+**Heads-up for the user:** already-open agent sessions will not pick up new
+MCP tools until restart. Tell them: "Restart any open Claude Code or Codex
+sessions to see `mcp__gbrain__*` tools — they're loaded at session start, not
+mid-session." For Codex remote-http mode, also tell them: "Make sure
+`~/.codex/gstack/gbrain-mcp.env` is sourced before starting Codex; otherwise
+Codex will know the MCP URL but will not have the bearer token."
 
 ---
 
