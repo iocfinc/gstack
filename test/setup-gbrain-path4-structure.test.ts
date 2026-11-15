@@ -113,9 +113,16 @@ describe('setup-gbrain Path 4 (Remote MCP) — structural contract', () => {
     expect(skeleton).toMatch(/unset GBRAIN_MCP_TOKEN/);
   });
 
+  test('Step 5a has a Codex Path 4 branch that uses bearer env vars instead of OAuth login', () => {
+    expect(skeleton).toMatch(/codex mcp add gbrain --url "\$MCP_URL" --bearer-token-env-var GBRAIN_MCP_TOKEN/);
+    expect(skeleton).toContain('~/.codex/gstack/gbrain-mcp.env');
+    expect(skeleton).not.toMatch(/codex mcp login gbrain/);
+  });
+
   test('Step 5a removes any prior gbrain registration before adding the new one', () => {
     // Otherwise local-stdio + remote-http coexist, which breaks routing.
     expect(skeleton).toMatch(/claude mcp remove gbrain/);
+    expect(skeleton).toMatch(/codex mcp remove gbrain/);
   });
 
   test('Step 7 calls gstack-artifacts-init with --url-form-supported flag (skeleton)', () => {
